@@ -47,6 +47,7 @@
 #include <Adafruit_MCP23017.h>
 #include <Adafruit_RGBLCDShield.h>
 #include <AFMotor.h>
+#include <math.h>
 
 // The shield uses the I2C SCL and SDA pins. On classic Arduinos
 // this is Analog 4 and 5 so you can't use those for analogRead() anymore
@@ -190,15 +191,15 @@ uint8_t menu_increment_selection[N_MENUS];
 ***********************************/
 
 // user configurable runtime parameters
-uint16_t tot_time = 600;        // 10 minutes default
-uint16_t tot_dist = 1;
-uint16_t exposures = 1;
+uint16_t tot_time = 300;        // 5 minutes default
+uint16_t tot_dist = 10000;
+uint16_t exposures = 100;
 uint16_t exposure_delay = DEFAULT_EXPOSURE_DELAY_MS;
 uint16_t bulb_ramp_enable = 0;
 uint16_t shutter_spd_initial = 0; // 1/20 sec default
 uint16_t shutter_spd_final = 34;  // 60 seconds default
 uint16_t ramp_start_time = 120; // 2 minutes default
-uint16_t ramp_end_time = 420;   // 7 minutes default
+uint16_t ramp_end_time = 240;   // 4 minutes default
 
 // runtime vars
 uint16_t shut_spd_current = 50;
@@ -210,6 +211,9 @@ uint16_t shutter_interval = 1;
 uint16_t run_dist = 1;
 uint16_t exposures_remaining = 1;
 uint16_t ramp_time_delta = ramp_end_time - ramp_start_time;
+uint16_t exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
+uint16_t exp_ramp_end = 1.0 * ramp_end_time / tot_time * exposures;
+float ramp_pos = 0.0; // time position in ramping goes from 0.0 to 1.0;
 
 unsigned long last_exposure = 0;
 
@@ -286,6 +290,12 @@ void recompute() {
       ramp_time_delta = ramp_end_time - ramp_start_time;
       Serial.print("Ramp Time Delta: ");
       Serial.println(ramp_time_delta);
+      exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
+      exp_ramp_end   = 1.0 * ramp_end_time   / tot_time * exposures;
+      Serial.print("# Exposure Ramp Start: ");
+      Serial.println(exp_ramp_start);
+      Serial.print("# Exposure Ramp End: ");
+      Serial.println(exp_ramp_end);
       break;
     case TOTAL_DIST:
       sp = (tot_dist * 1.0 / PREVENT_DIV_ZERO(tot_time)) + 0.5;
@@ -329,6 +339,12 @@ void recompute() {
       ramp_time_delta = ramp_end_time - ramp_start_time;
       Serial.print("Ramp Time Delta: ");
       Serial.println(ramp_time_delta);
+      exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
+      exp_ramp_end   = 1.0 * ramp_end_time   / tot_time * exposures;
+      Serial.print("# Exposure Ramp Start: ");
+      Serial.println(exp_ramp_start);
+      Serial.print("# Exposure Ramp End: ");
+      Serial.println(exp_ramp_end);
       break;
     case RAMP_END_TIME:
       if (ramp_end_time < 1) {
@@ -343,6 +359,12 @@ void recompute() {
       ramp_time_delta = ramp_end_time - ramp_start_time;
       Serial.print("Ramp Time Delta: ");
       Serial.println(ramp_time_delta);
+      exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
+      exp_ramp_end   = 1.0 * ramp_end_time   / tot_time * exposures;
+      Serial.print("# Exposure Ramp Start: ");
+      Serial.println(exp_ramp_start);
+      Serial.print("# Exposure Ramp End: ");
+      Serial.println(exp_ramp_end);
       break;
     default:
       // nada
@@ -368,6 +390,21 @@ int forDistance(uint16_t turns) {
 
 // redid for bulb ramping 20140930
 void shutter() {
+  if (bulb_ramp_enable) {
+    if ( exposures_remaining > (exposures - exp_ramp_start) ) {
+      shut_spd_current = getShutterSpd(shutter_spd_initial);
+    } else if ( exposures_remaining < (exposures - exp_ramp_end) ) {
+      shut_spd_current = getShutterSpd(shutter_spd_final);
+    } else {
+      ramp_pos = 1.0 * (exposures - exposures_remaining - exp_ramp_start) / (exp_ramp_end - exp_ramp_start);
+      Serial.print("t: ");
+      Serial.println(ramp_pos);
+      shut_spd_current = getShutterSpd(shutter_spd_initial);
+      shut_spd_current += (getShutterSpd(shutter_spd_final)-getShutterSpd(shutter_spd_initial))/(1.0+exp(-16.0*(ramp_pos-0.5)));
+    }
+    Serial.print("shutter spd: ");
+    Serial.println(shut_spd_current);
+  }
   digitalWrite(shutterPin, HIGH);
   delay(bulb_ramp_enable ? shut_spd_current : 50);
   digitalWrite(shutterPin, LOW);
@@ -429,8 +466,10 @@ void run_motor() {
 void expose() {
   shutter();
   exposures_remaining--;
-  Serial.print("exposures left:");
+  Serial.print("exposures left: ");
   Serial.println(exposures_remaining);
+  Serial.print("exposures #: ");
+  Serial.println(exposures-exposures_remaining);
 }
 
 void displayMenu() {
@@ -670,26 +709,5 @@ case label:							\
 
   delay(MENU_DELAY);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
