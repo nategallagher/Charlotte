@@ -47,6 +47,9 @@
 #include <Adafruit_MCP23017.h>
 #include <Adafruit_RGBLCDShield.h>
 #include <AFMotor.h>
+#include <AccelStepper.h>
+#include <Stepper.h>
+
 #include <math.h>
 
 // The shield uses the I2C SCL and SDA pins. On classic Arduinos
@@ -56,17 +59,18 @@
 Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
 
 // These #defines make it easy to set the backlight color
-#define OFF 0x0
-#define RED 0x1
-#define YELLOW 0x3
-#define GREEN 0x2
-#define TEAL 0x6
-#define BLUE 0x4
-#define VIOLET 0x5
-#define WHITE 0x7
+#define LCD_OFF 0x0
+#define LCD_ON 0x1
+//#define RED 0x1
+//#define YELLOW 0x3
+//#define GREEN 0x2
+//#define TEAL 0x6
+//#define BLUE 0x4
+//#define VIOLET 0x5
+//#define WHITE 0x7
 
 const int steps_per_revolution = 200; //steps per revoluntion = 360 degrees / step degree
-const int shutterPin = 13;
+const int shutterPin = 4;
 //const int focusPin = 2;
 
 const int MENU_DELAY = 100;
@@ -78,24 +82,47 @@ const float RAIL_SIZE = 5;
 const uint16_t DEFAULT_EXPOSURE_DELAY_MS = 100;      // -pw 20131125
 
 // Arduino pins the encoder is attached to. Attach the center to ground.
-#define ROTARY_PIN1 9
-#define ROTARY_PIN2 10
+#define ROTARY_PIN1 14
+#define ROTARY_PIN2 15
 
 
+// change this to the number of steps on your motor
+#define STEPS 200
+// inches moved in a single step
+#define STEP_INTERVAL_LIMIT 0.01305
+Stepper stepper(STEPS, 8, 9, 11, 12);
+#define MOTOR_ENABLE_PIN 7
 
 AF_Stepper motor(200, 1);
+
 
 void setup() {
   // Debugging output
   Serial.begin(9600);
+
+  //enable motor pin
+  pinMode(MOTOR_ENABLE_PIN, OUTPUT);
+  digitalWrite(MOTOR_ENABLE_PIN, LOW);
+
+  // 41% duty cycle PWM on pin 9
+  // 5.16V / 12.6V = ~41%
+  // Range 12.6-10.8V, 41-48%, 105-122
+  // 50 =  .48A
+  // 75 = .71A
+  // 68 ~ .638
+  // 122 ~1.24 @ 12.6V
+  int pwmPin = 10;
+  //int pwmTorque = 122;
+  int pwmTorque = 122;
+  analogWrite(pwmPin,pwmTorque);
+  
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
-
   lcd.setCursor(0, 0);
   lcd.print("Charlotte Dolly");
   lcd.setCursor(0, 1);
   lcd.print("Controller");
-  lcd.setBacklight(RED);
+  lcd.setBacklight(LCD_ON);
   lcd.cursor();
   pinMode(shutterPin, OUTPUT);
 
@@ -104,6 +131,10 @@ void setup() {
 
   delay(2000);
   lcd.clear();
+
+
+
+
 }
 
 boolean run = false;
@@ -123,6 +154,7 @@ enum MenuItems {
   SPEEDY,
   SHUTTER_DIST,
   SHUTTER_INTERVAL,
+  HOLD_MOTOR_ENABLE,
   BULB_RAMP_ENABLE,
   SHUTTER_SPD_INITIAL,
   SHUTTER_SPD_FINAL,
@@ -139,6 +171,7 @@ char* Menu[] = {
   "Speed",
   "Shutter Distance",
   "Shutter Interval",
+  "Hold Motor Btwn. Shots",
   "Bulb Ramp On/Off",
   "Shutter Spd Initial",
   "Shutter Spd Final",
@@ -151,12 +184,13 @@ char* Menu[] = {
 
 uint16_t  menu_increments[N_MENUS][6] = {
   {1, 60, 3600},              // tot_time
-  {1, 10, 100, 1000},         // tot_dist
+  {1, 12},                    // tot_dist
   {1, 10, 100, 1000, 10000},  // exposures
   {10, 100, 1000, 10000},     // exposure_delay
   {1},                        // speed
   {1},                        // shutter distance
   {1},                        // shutter interval
+  {1},                        // hold motor enable
   {1},                        // bulb ramp enable
   {1, 10, 100, 1000},         // shutter spd initial
   {1, 10, 100, 1000},         // shutter spd final
@@ -167,12 +201,13 @@ uint16_t  menu_increments[N_MENUS][6] = {
 
 uint8_t  n_menu_increments[N_MENUS] =   {
   3,                       // tot_time
-  4,                       // tot_dist
+  2,                       // tot_dist
   5,                       // exposures
   4,                       // exposure_delay
   1,                       // speed
   1,                       // shutter distance
   1,                       // shutter interval
+  1,                       // hold motor enable
   1,                       // bulb ramp enable
   4,                       // shutter spd initial
   4,                       // shutter spd final
@@ -191,10 +226,11 @@ uint8_t menu_increment_selection[N_MENUS];
 ***********************************/
 
 // user configurable runtime parameters
-uint16_t tot_time = 300;        // 5 minutes default
-uint16_t tot_dist = 10000;
-uint16_t exposures = 100;
+uint16_t tot_time = 60;        // 5 minutes default
+uint16_t tot_dist = 13; // 13 inches ~ 1000 steps / 5 * 360 degrees
+uint16_t exposures = 10;
 uint16_t exposure_delay = DEFAULT_EXPOSURE_DELAY_MS;
+uint16_t hold_motor_enable = 0;
 uint16_t bulb_ramp_enable = 0;
 uint16_t shutter_spd_initial = 0; // 1/20 sec default
 uint16_t shutter_spd_final = 34;  // 60 seconds default
@@ -205,15 +241,19 @@ uint16_t ramp_end_time = 240;   // 4 minutes default
 uint16_t shut_spd_current = 50;
 
 // automatically calculated runtime parameters
-uint16_t sp = 1;
-uint16_t shutter_dist = 1;
+uint16_t motor_speed = 1;
+float shutter_dist = 1.0;
 uint16_t shutter_interval = 1;
-uint16_t run_dist = 1;
+float run_dist = 1.0;
 uint16_t exposures_remaining = 1;
 uint16_t ramp_time_delta = ramp_end_time - ramp_start_time;
 uint16_t exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
 uint16_t exp_ramp_end = 1.0 * ramp_end_time / tot_time * exposures;
 float ramp_pos = 0.0; // time position in ramping goes from 0.0 to 1.0;
+
+//temp values
+uint16_t tempInt = 1;
+float tempFloat = 1.0
 
 unsigned long last_exposure = 0;
 
@@ -279,47 +319,62 @@ void recompute() {
       if (tot_time < 1) {
         tot_time = 1;
       }
-      sp = (tot_dist * 1.0 / PREVENT_DIV_ZERO(tot_time)) + 0.5;
-      shutter_interval = (tot_time * 1.0 / PREVENT_DIV_ZERO(exposures)) + 0.5;
-      if (ramp_end_time > tot_time) {
-        ramp_end_time = tot_time;
+      motor_speed = (tot_dist * 1.0 / PREVENT_DIV_ZERO(tot_time)) + 1.0;
+      shutter_interval = (tot_time * 1.0 / PREVENT_DIV_ZERO(exposures));
+      if (bulb_ramp_enable >= 1) {
+        if (ramp_end_time > tot_time) {
+          ramp_end_time = tot_time;
+        }
+        if (ramp_start_time >= ramp_end_time) {
+          ramp_start_time = ramp_end_time - 1;
+        }
+        ramp_time_delta = ramp_end_time - ramp_start_time;
+        Serial.print("Ramp Time Delta: ");
+        Serial.println(ramp_time_delta);
+        exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
+        exp_ramp_end   = 1.0 * ramp_end_time   / tot_time * exposures;
+        Serial.print("# Exposure Ramp Start: ");
+        Serial.println(exp_ramp_start);
+        Serial.print("# Exposure Ramp End: ");
+        Serial.println(exp_ramp_end);
       }
-      if (ramp_start_time >= ramp_end_time) {
-        ramp_start_time = ramp_end_time - 1;
-      }
-      ramp_time_delta = ramp_end_time - ramp_start_time;
-      Serial.print("Ramp Time Delta: ");
-      Serial.println(ramp_time_delta);
-      exp_ramp_start = 1.0 * ramp_start_time / tot_time * exposures;
-      exp_ramp_end   = 1.0 * ramp_end_time   / tot_time * exposures;
-      Serial.print("# Exposure Ramp Start: ");
-      Serial.println(exp_ramp_start);
-      Serial.print("# Exposure Ramp End: ");
-      Serial.println(exp_ramp_end);
       break;
     case TOTAL_DIST:
-      sp = (tot_dist * 1.0 / PREVENT_DIV_ZERO(tot_time)) + 0.5;
-      shutter_dist = (tot_dist * 1.0 / PREVENT_DIV_ZERO(exposures)) + 0.5;
+      motor_speed = (tot_dist * 1.0 / PREVENT_DIV_ZERO(tot_time)) + 1.0;
+      shutter_dist = (tot_dist * 1.0 / PREVENT_DIV_ZERO(exposures));
+      if (shutter_dist < STEP_INTERVAL_LIMIT) {
+        tot_dist = ceil(STEP_INTERVAL_LIMIT * exposures);
+        shutter_dist = (tot_dist * 1.0 / PREVENT_DIV_ZERO(exposures));
+      }
       break;
     case EXPOSURES:
-      shutter_dist = (tot_dist * 1.0 / PREVENT_DIV_ZERO(exposures)) + 0.5;
-      shutter_interval = (tot_time * 1.0 / PREVENT_DIV_ZERO(exposures)) + 0.5;
+      shutter_interval = (tot_time * 1.0 / PREVENT_DIV_ZERO(exposures));
+      shutter_dist = (tot_dist * 1.0 / PREVENT_DIV_ZERO(exposures));
+      if (shutter_dist < STEP_INTERVAL_LIMIT) {
+        exposures = floor(tot_dist/STEP_INTERVAL_LIMIT);
+        shutter_dist = (tot_dist * 1.0 / PREVENT_DIV_ZERO(exposures));
+      }
       break;
     case SPEEDY:
-      //    tot_time = tot_dist / sp;
+      //    tot_time = tot_dist / motor_speed;
       //    exposures = tot_time / shutter_interval;
       break;
     case SHUTTER_DIST:
       //    exposures = tot_dist / shutter_dist;
-      //    shutter_interval = shutter_dist / sp;
+      //    shutter_interval = shutter_dist / motor_speed;
       break;
     case SHUTTER_INTERVAL:
       //    exposures = tot_time / shutter_interval;
-      //    shutter_dist = shutter_interval * sp;
+      //    shutter_dist = shutter_interval * motor_speed;
+      break;
+    case HOLD_MOTOR_ENABLE:
+      if (hold_motor_enable > 1) {
+        hold_motor_enable = 0;
+      }
       break;
     case BULB_RAMP_ENABLE:
       if (bulb_ramp_enable > 1) {
-        bulb_ramp_enable = 1;
+        bulb_ramp_enable = 0;
       }
       break;
     case SHUTTER_SPD_INITIAL:
@@ -375,14 +430,26 @@ void recompute() {
 
 void setup_run() {
   run_dist = tot_dist;
-  int rpm = ceil(sp * 60);
-  motor.setSpeed(rpm);  //  rpm
+  int rpm = ceil(motor_speed * 60);
+  //motor.setSpeed(rpm);  //  rpm
+  //stepper.setSpeed(rpm);
+  stepper.setSpeed(60);
 
   exposures_remaining = exposures;
 }
 
-int forDistance(uint16_t turns) {
-  int steps = turns * steps_per_revolution;
+int inchesToSteps(uint16_t inches) {
+  // 76.62835249 steps per inch
+  int steps = ceil(76.62835249 * inches);
+  Serial.print("Took: ");
+  Serial.println(steps);
+  return steps;
+}
+
+int floatInchesToSteps(float inches) {
+  // 76.62835249 steps per inch
+  // 0.01305 inches per step
+  int steps = ceil(76.62835249 * inches);
   Serial.print("Took: ");
   Serial.println(steps);
   return steps;
@@ -412,18 +479,19 @@ void shutter() {
 
 void stop() {
   motor.release();
+  digitalWrite(MOTOR_ENABLE_PIN, LOW);
   menu = TOTAL_DIST;
   recompute();
   run = false;
 
-  lcd.setBacklight(RED);
+  lcd.setBacklight(LCD_ON);
 }
 
 void start() {
   setup_run();
   run = true;
 
-  lcd.setBacklight(OFF);
+  lcd.setBacklight(LCD_OFF);
 }
 
 void run_motor() {
@@ -433,7 +501,12 @@ void run_motor() {
       expose();
       last_exposure = millis();
       delay(exposure_delay);    // -PW 20131125
-      motor.step(forDistance(shutter_dist), FORWARD, INTERLEAVE);
+      digitalWrite(MOTOR_ENABLE_PIN, HIGH);
+      //motor.step(floatInchesToSteps(shutter_dist), FORWARD, INTERLEAVE);
+      stepper.step(floatInchesToSteps(shutter_dist));
+      if (!hold_motor_enable) {
+        digitalWrite(MOTOR_ENABLE_PIN, LOW);
+      }
       run_dist -= shutter_dist;
       Serial.print("dist left:");
       Serial.println(run_dist);
@@ -451,7 +524,12 @@ void run_motor() {
 
   } else {
 
-    motor.step(forDistance(run_dist), FORWARD, INTERLEAVE);
+    digitalWrite(MOTOR_ENABLE_PIN, HIGH);
+    //motor.step(floatInchesToSteps(run_dist), FORWARD, INTERLEAVE);
+    stepper.step(floatInchesToSteps(run_dist));
+    if (!hold_motor_enable) {
+      digitalWrite(MOTOR_ENABLE_PIN, LOW);
+    }
     run_dist = 0;
     if (exposures_remaining > 0) {
       expose();
@@ -498,11 +576,16 @@ String displayTime(uint16_t seconds) {
   return time_str;
 }
 
-float displayDist(uint16_t mms) {
-  uint16_t m = mms / 1000;
-  uint16_t mm = mms % 1000;
-  return m + mm / 1000.0;
-  //return m + String(".") + mm + String(" m");
+String displayDist(uint16_t inches) {
+  uint16_t feet = inches / 12;
+  inches = inches % 12;
+  String dist_str = "";
+  if (feet < 10) { dist_str += 0; }
+  dist_str += feet + String(" ft. ");
+  if (inches < 10) { dist_str += 0; }
+  dist_str += inches + String(" in.");
+  return dist_str;
+  //return inches + String(" inches");
 }
 
 String displayOnOff(uint16_t value) {
@@ -544,7 +627,7 @@ void displayValue() {
       lcd.print(displayTime(tot_time));
       break;
     case TOTAL_DIST:
-      lcd.print(displayDist(tot_dist), 3);
+      lcd.print(displayDist(tot_dist));
       break;
     case EXPOSURES:
       lcd.print(exposures);
@@ -553,17 +636,21 @@ void displayValue() {
       lcd.print(exposure_delay);
       break;
     case SPEEDY:
-      lcd.print(sp, 5);
+      lcd.print(motor_speed, 5);
       break;
     case SHUTTER_DIST:
-      lcd.print(displayDist(shutter_dist), 5);
+      // lcd.print(displayDist(shutter_dist));
+      lcd.print(shutter_dist,5);
+      lcd.print(" inches");
       break;
     case SHUTTER_INTERVAL:
       lcd.print(displayTime(shutter_interval));
       break;
+    case HOLD_MOTOR_ENABLE:
+      lcd.print(displayOnOff(hold_motor_enable));
+      break;
     case BULB_RAMP_ENABLE:
       lcd.print(displayOnOff(bulb_ramp_enable));
-      //lcd.print("On ");
       break;
     case SHUTTER_SPD_INITIAL:
       lcd.print(displayShutterSpd(shutter_spd_initial)+" s "+getShutterSpd(shutter_spd_initial)+" ms");
@@ -602,13 +689,13 @@ void readRotary() {
       READ_ROT_CASE(TOTAL_DIST,          tot_dist)
       READ_ROT_CASE(EXPOSURES,           exposures)
       READ_ROT_CASE(EXPOSURE_DELAY,      exposure_delay)
+      READ_ROT_CASE(HOLD_MOTOR_ENABLE,   hold_motor_enable)
       READ_ROT_CASE(BULB_RAMP_ENABLE,    bulb_ramp_enable)
       READ_ROT_CASE(SHUTTER_SPD_INITIAL, shutter_spd_initial)
       READ_ROT_CASE(SHUTTER_SPD_FINAL,   shutter_spd_final)
       READ_ROT_CASE(RAMP_START_TIME,     ramp_start_time)
       READ_ROT_CASE(RAMP_END_TIME,       ramp_end_time)
   }
-
   recompute();
 
 }
@@ -670,6 +757,7 @@ case label:							\
         READ_BTN_CASE_DEC(TOTAL_DIST, tot_dist)
         READ_BTN_CASE_DEC(EXPOSURES, exposures)
         READ_BTN_CASE_DEC(EXPOSURE_DELAY, exposure_delay)
+        READ_BTN_CASE_DEC(HOLD_MOTOR_ENABLE, hold_motor_enable)
         READ_BTN_CASE_DEC(BULB_RAMP_ENABLE, bulb_ramp_enable)
         READ_BTN_CASE_DEC(SHUTTER_SPD_INITIAL, shutter_spd_initial)
         READ_BTN_CASE_DEC(SHUTTER_SPD_FINAL, shutter_spd_final)
@@ -685,6 +773,7 @@ case label:							\
         READ_BTN_CASE_INC(TOTAL_DIST, tot_dist)
         READ_BTN_CASE_INC(EXPOSURES, exposures)
         READ_BTN_CASE_INC(EXPOSURE_DELAY, exposure_delay)
+        READ_BTN_CASE_INC(HOLD_MOTOR_ENABLE, hold_motor_enable)
         READ_BTN_CASE_INC(BULB_RAMP_ENABLE, bulb_ramp_enable)
         READ_BTN_CASE_INC(SHUTTER_SPD_INITIAL, shutter_spd_initial)
         READ_BTN_CASE_INC(SHUTTER_SPD_FINAL, shutter_spd_final)
