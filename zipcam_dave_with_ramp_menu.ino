@@ -71,7 +71,6 @@ Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
 
 const int steps_per_revolution = 200; //steps per revoluntion = 360 degrees / step degree
 const int shutterPin = 4;
-//const int focusPin = 2;
 
 const int MENU_DELAY = 100;
 const float WHEEL_SIZE = 10;
@@ -88,10 +87,26 @@ const uint16_t DEFAULT_EXPOSURE_DELAY_MS = 100;      // -pw 20131125
 
 // change this to the number of steps on your motor
 #define STEPS 200
+// define stepper motor pins
+#define MOT_A1 10
+#define MOT_A2 11
+#define MOT_B1 8
+#define MOT_B2 7
 // inches moved in a single step
 #define STEP_INTERVAL_LIMIT 0.01305
-Stepper stepper(STEPS, 8, 9, 11, 12);
-#define MOTOR_ENABLE_PIN 7
+Stepper stepper(STEPS, MOT_A1, MOT_A2, MOT_B1, MOT_B2);
+#define MOTOR_ENABLE_PIN 9
+#define MOTOR_PWM_A 5
+#define MOTOR_PWM_B 6
+// 41% duty cycle PWM on pin 9
+// 5.16V / 12.6V = ~41%
+// Range 12.6-10.8V, 41-48%, 105-122
+// 50 =  .48A
+// 75 = .71A
+// 68 ~ .638
+// 122 ~1.24 @ 12.6V
+//int pwmTorque = 122;
+#define MOT_TORQUE 122
 
 AF_Stepper motor(200, 1);
 
@@ -104,17 +119,8 @@ void setup() {
   pinMode(MOTOR_ENABLE_PIN, OUTPUT);
   digitalWrite(MOTOR_ENABLE_PIN, LOW);
 
-  // 41% duty cycle PWM on pin 9
-  // 5.16V / 12.6V = ~41%
-  // Range 12.6-10.8V, 41-48%, 105-122
-  // 50 =  .48A
-  // 75 = .71A
-  // 68 ~ .638
-  // 122 ~1.24 @ 12.6V
-  int pwmPin = 10;
-  //int pwmTorque = 122;
-  int pwmTorque = 122;
-  analogWrite(pwmPin,pwmTorque);
+  analogWrite(MOTOR_PWM_A, MOT_TORQUE);
+  analogWrite(MOTOR_PWM_B, MOT_TORQUE);
   
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
