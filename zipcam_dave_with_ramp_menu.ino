@@ -259,7 +259,7 @@ float ramp_pos = 0.0; // time position in ramping goes from 0.0 to 1.0;
 
 //temp values
 uint16_t tempInt = 1;
-float tempFloat = 1.0
+float tempFloat = 1.0;
 
 unsigned long last_exposure = 0;
 
