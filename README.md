@@ -10,7 +10,7 @@ Download this code and the Arduino IDE
 
 	https://www.arduino.cc/en/Main/Software
 
-### Prerequisities
+### Software Prerequisities
 
 Charlotte uses the following Arduino libraries:
 
@@ -26,7 +26,23 @@ Adafruit MCP23017 I2c Port Expander
 
 	https://github.com/adafruit/Adafruit-MCP23017-Arduino-Library
 
+### Hardware Prerequisities
 
+Charlotte uses the following electronic packages:
+
+Arduino Micro
+
+	https://www.arduino.cc/en/Main/ArduinoBoardMicro
+
+Pololu A4988 Stepper Motor Driver Carrier, Black Edition
+
+	https://www.pololu.com/product/2128
+
+Adafruit LCD Shield
+
+	https://www.adafruit.com/products/772
+
+Schematics Coming Soon
 
 ### Installing
 
