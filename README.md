@@ -2,6 +2,8 @@
 
 A 3-in-1 motorized dolly including a cable, wheel and rail dolly that lets you create beautiful time lapses and live action videos.
 
+Mechanical Design by David Koch
+
 	https://www.kickstarter.com/projects/1492262416/charlotte-a-modular-real-time-and-time-lapse-dolly
 
 ## Getting Started
